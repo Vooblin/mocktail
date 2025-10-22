@@ -11,21 +11,35 @@ This is an **early-stage Go project** - prioritize simplicity and indie dev work
 
 ## Current Architecture
 
-### Existing Structure
+### Implemented Components
 
-- **CLI Framework**: Uses `cobra` (github.com/spf13/cobra v1.10.1) for command structure
-- **Entry Point**: `cmd/mocktail/main.go` - defines `newRootCmd()` that returns configured cobra.Command
-- **Version**: Hardcoded `version = "0.1.0"` constant in main.go
-- **Build System**: Makefile-based workflow (see below)
-- **Go Version**: 1.25.0 (go.mod)
+**CLI Framework** (`cmd/mocktail/`):
+
+- Uses `cobra` (github.com/spf13/cobra v1.10.1) for command structure
+- `main.go`: Defines `newRootCmd()` that returns configured cobra.Command
+- `parse.go`: Implements `parse <schema-file>` subcommand with `-o/--output` flag (summary|verbose)
+- Version: Hardcoded `version = "0.1.0"` constant in main.go
+
+**OpenAPI Parser** (`internal/parser/`):
+
+- `Parser` interface: Defines `Parse(filepath string) (*Schema, error)` contract
+- `OpenAPIParser`: Uses `github.com/getkin/kin-openapi` library for OpenAPI 3.x validation
+- `Schema` model: Normalized representation with Type, Version, Title, Paths, and Raw fields
+- `Endpoint` model: Captures Method, Path, Summary, Description, Parameters per endpoint
+- Validates specs with `doc.Validate(ctx)` before parsing
+- Example usage: `mocktail parse examples/petstore.yaml -o verbose`
+
+**Build System**:
+
+- Makefile with targets: `build`, `test`, `test-coverage`, `lint` (fmt+vet), `clean`, `deps`, `help`
+- Outputs to `bin/mocktail`
+- Go version: 1.25.0
 
 ### Components To Be Built
 
-The `internal/` directory is currently empty. Planned structure:
-
-- `internal/parser/` - OpenAPI 3.x/GraphQL schema parsing
 - `internal/mock/` - HTTP mock server implementation  
 - `internal/generator/` - Payload and test data generation
+- `internal/monitor/` - Traffic watching & breaking change detection
 
 ## Development Workflow
 
@@ -60,24 +74,60 @@ func newRootCmd() *cobra.Command {
 
 ### Testing Pattern
 
-See `cmd/mocktail/main_test.go` for established pattern:
+All components follow table-driven or scenario-based testing:
 
-- Test constructors (e.g., `TestRootCommand` validates `newRootCmd()` properties)
-- Use plain `if` checks with `t.Errorf()` for simple validations
+**Command Tests** (`cmd/mocktail/*_test.go`):
+
+```go
+func TestParseCommand(t *testing.T) {
+    cmd := newParseCmd()
+    // Test command properties with plain if checks
+    if cmd.Use != "parse <schema-file>" {
+        t.Errorf("Expected Use 'parse <schema-file>', got '%s'", cmd.Use)
+    }
+    // Validate flags exist
+    outputFlag := cmd.Flags().Lookup("output")
+    if outputFlag == nil {
+        t.Error("Expected 'output' flag to exist")
+    }
+}
+```
+
+**Parser Tests** (`internal/parser/parser_test.go`):
+
+- Use `t.TempDir()` for test file isolation
+- Write test OpenAPI specs inline as strings
+- Test happy path validation (titles, paths, parameters)
+- Test error cases (nonexistent files, invalid specs)
+- Example: `TestOpenAPIParser_Parse` validates parsed Schema struct fields
+
+**Conventions**:
+
 - Use `strings.Contains()` for substring checks in descriptions
+- Prefer `t.Fatalf()` when test cannot continue, `t.Errorf()` otherwise
+- No test frameworks - plain `testing` package only
 
 ### Error Handling
 
-- Return errors explicitly from functions
-- Wrap errors with context: `fmt.Errorf("context: %w", err)`
-- Main entry point handles errors: checks `Execute()` result, prints to stderr, exits with code 1
+- Return errors explicitly from functions with context wrapping:
+
+  ```go
+  return fmt.Errorf("failed to parse schema: %w", err)
+  ```
+
+- Cobra RunE functions return error: `RunE: func(cmd *cobra.Command, args []string) error`
+- Main entry point checks `Execute()` result, prints to stderr, exits with code 1
+- Parser validates OpenAPI specs with `doc.Validate(ctx)` before processing
 
 ### Project Layout (Standard Go)
 
-- `/cmd/mocktail/` - CLI entry point and commands
-- `/internal/` - Private application code (not importable by external projects)
+- `/cmd/mocktail/` - CLI commands (each command in separate file: `parse.go`, `mock.go`, etc.)
+- `/internal/parser/` - Schema parsing (OpenAPI implemented, GraphQL planned)
+- `/internal/mock/` - Mock server (not yet implemented)
+- `/internal/generator/` - Data generation (not yet implemented)
+- `/examples/` - Sample schemas for testing (`petstore.yaml`)
 - `/bin/` - Build output (gitignored)
-- No `/pkg/` yet - only add if code needs external reuse
+- No `/pkg/` - all code is internal to mocktail
 
 ## Design Principles
 
@@ -98,25 +148,49 @@ See `cmd/mocktail/main_test.go` for established pattern:
 
 ### Schema Parsing Strategy
 
-- Parsers should implement common interface for pluggability
-- Start with OpenAPI 3.x (most common), add GraphQL later
-- Question to resolve: Best-effort vs strict schema validation
+**Current Implementation** (`internal/parser/parser.go`):
+
+- Interface-based design: `Parser` interface with `Parse(filepath string) (*Schema, error)`
+- `OpenAPIParser` uses `github.com/getkin/kin-openapi` library
+- Validation before parsing: `doc.Validate(ctx)` catches spec errors early
+- Normalization: Converts OpenAPI-specific structures to generic `Schema`, `Endpoint`, `Parameter` types
+- Parameter extraction: `extractParameters()` helper pulls type info from OpenAPI schema references
+
+**Data Model**:
+
+```go
+type Schema struct {
+    Type    string                // "openapi" or "graphql"
+    Version string                // e.g., "3.0.0"
+    Title   string
+    Paths   map[string][]Endpoint // Path -> methods
+    Raw     interface{}           // Original parsed object
+}
+```
+
+**Extension Strategy**: Add GraphQL by implementing `Parser` interface (see `NewOpenAPIParser()` pattern)
 
 ## Key Files
 
 - `cmd/mocktail/main.go` - CLI entry point with cobra setup
+- `cmd/mocktail/parse.go` - Parse command implementation (RunE pattern)
 - `cmd/mocktail/main_test.go` - Test pattern reference
+- `internal/parser/parser.go` - Parser interface, OpenAPIParser, Schema models
+- `internal/parser/parser_test.go` - Parser testing with t.TempDir() pattern
 - `Makefile` - Build automation and available commands
-- `go.mod` - Go 1.25.0, cobra v1.10.1
+- `go.mod` - Go 1.25.0, cobra v1.10.1, kin-openapi v0.133.0
+- `examples/petstore.yaml` - Sample OpenAPI spec for testing
 - `README.md` - User-facing documentation and quick start
 
 ## Next Steps for AI Agents
 
 When implementing features:
-1. Create packages in `internal/` following Standard Go Project Layout
-2. Add corresponding cobra subcommands in `cmd/mocktail/main.go`
-3. Follow established testing pattern from `main_test.go`
-4. Update Makefile if new build steps are needed
-5. Increment version constant in main.go for releases
 
-Start with MVP: OpenAPI parser → simple mock server → basic payload generation.
+1. Create packages in `internal/` following Standard Go Project Layout
+2. Add corresponding cobra subcommands in `cmd/mocktail/` (separate file per command)
+3. Follow established testing pattern: `t.TempDir()` for files, plain if checks, no frameworks
+4. Implement interfaces where possible (see `Parser` for pattern)
+5. Update Makefile if new build steps are needed
+6. Increment version constant in main.go for releases
+
+**Next Priority**: Mock server implementation (`internal/mock/`) with HTTP handler that uses parsed Schema

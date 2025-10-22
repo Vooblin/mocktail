@@ -2,11 +2,18 @@
 
 Upload an OpenAPI/GraphQL schema, or point it at a staging endpoint, and Mocktail spins up a realistic mock server, generates sample and edge-case payloads, and auto-writes contract tests for your CI. It then watches traffic to detect breaking changes before they reach production. Perfect for small teams and indie devs shipping APIs fast.
 
+## Features
+
+✅ **OpenAPI 3.x Parser** - Parse and validate OpenAPI specifications with detailed endpoint analysis  
+🚧 **Mock Server** - Coming soon  
+🚧 **Test Generator** - Coming soon  
+🚧 **Traffic Monitor** - Coming soon
+
 ## Quick Start
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.25 or later
 
 ### Installation
 
@@ -25,8 +32,11 @@ make install
 ### Usage
 
 ```bash
-# Run mocktail
-./bin/mocktail
+# Parse and validate an OpenAPI schema
+./bin/mocktail parse examples/petstore.yaml
+
+# Parse with verbose output (shows all endpoints)
+./bin/mocktail parse examples/petstore.yaml -o verbose
 
 # Show version
 ./bin/mocktail --version
@@ -61,18 +71,18 @@ make help
 ```text
 mocktail/
 ├── cmd/
-│   └── mocktail/       # CLI entry point
+│   └── mocktail/       # CLI entry point and commands
 ├── internal/           # Private application code
-│   ├── parser/        # Schema parsing logic (to be added)
-│   ├── mock/          # Mock server implementation (to be added)
-│   └── generator/     # Payload and test generation (to be added)
-├── api/               # OpenAPI/schema definitions (to be added)
+│   ├── parser/        # Schema parsing logic (OpenAPI 3.x implemented)
+│   ├── mock/          # Mock server implementation (planned)
+│   └── generator/     # Payload and test generation (planned)
+├── examples/          # Sample API schemas for testing
 └── bin/               # Compiled binaries
 ```
 
 ## Roadmap
 
-- [ ] OpenAPI 3.x schema parser
+- [x] OpenAPI 3.x schema parser
 - [ ] GraphQL schema parser
 - [ ] Realistic mock server
 - [ ] Payload generator (happy path & edge cases)
