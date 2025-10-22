@@ -7,7 +7,7 @@
 ✅ **OpenAPI 3.x Parser** - Parse and validate OpenAPI specifications  
 ✅ **Mock Server** - HTTP mock server with realistic, schema-driven responses  
 ✅ **Schema-Aware Generator** - Produces realistic mock data respecting types, formats, and constraints  
-🚧 **Contract Test Generator** - Coming soon  
+✅ **Contract Test Generator** - Generate test payloads from OpenAPI schemas  
 🚧 **Traffic Monitor** - Coming soon
 
 ## Quick Start
@@ -49,6 +49,15 @@ make install
 curl http://localhost:8080/health
 curl http://localhost:8080/pets
 curl http://localhost:8080/pets/123
+
+# Generate test payloads from schema
+./bin/mocktail generate examples/petstore.yaml --path /pets --method GET --seed 42
+
+# Generate request body for POST endpoint
+./bin/mocktail generate examples/petstore.yaml --path /pets --method POST --seed 100
+
+# Generate multiple test fixtures
+./bin/mocktail generate examples/petstore.yaml --path /pets --method GET --count 5 --seed 42
 
 # Show version
 ./bin/mocktail --version
@@ -109,7 +118,7 @@ Responses are deterministic (same seed = same data) and path-aware:
 - [x] OpenAPI 3.x schema parser with validation
 - [x] HTTP mock server with realistic responses
 - [x] Schema-aware data generator (types, formats, constraints)
-- [ ] Contract test generator
+- [x] Contract test generator
 - [ ] GraphQL schema parser
 - [ ] Traffic monitoring & breaking change detection
 
