@@ -35,7 +35,7 @@ tests for your CI. It then watches traffic to detect breaking changes before the
 
 	// Add subcommands as they are developed
 	rootCmd.AddCommand(newParseCmd())
-	// rootCmd.AddCommand(newMockCmd())
+	rootCmd.AddCommand(newMockCmd())
 	// rootCmd.AddCommand(newGenerateCmd())
 	// rootCmd.AddCommand(newMonitorCmd())
 

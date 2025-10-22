@@ -5,7 +5,7 @@ Upload an OpenAPI/GraphQL schema, or point it at a staging endpoint, and Mocktai
 ## Features
 
 ✅ **OpenAPI 3.x Parser** - Parse and validate OpenAPI specifications with detailed endpoint analysis  
-🚧 **Mock Server** - Coming soon  
+✅ **Mock Server** - HTTP mock server with realistic responses based on schema endpoints  
 🚧 **Test Generator** - Coming soon  
 🚧 **Traffic Monitor** - Coming soon
 
@@ -37,6 +37,17 @@ make install
 
 # Parse with verbose output (shows all endpoints)
 ./bin/mocktail parse examples/petstore.yaml -o verbose
+
+# Start a mock server from an OpenAPI schema
+./bin/mocktail mock examples/petstore.yaml
+
+# Start mock server on a custom port
+./bin/mocktail mock examples/petstore.yaml --port 3000
+
+# Test the mock server
+curl http://localhost:8080/health
+curl http://localhost:8080/pets
+curl http://localhost:8080/pets/123
 
 # Show version
 ./bin/mocktail --version
@@ -74,7 +85,7 @@ mocktail/
 │   └── mocktail/       # CLI entry point and commands
 ├── internal/           # Private application code
 │   ├── parser/        # Schema parsing logic (OpenAPI 3.x implemented)
-│   ├── mock/          # Mock server implementation (planned)
+│   ├── mock/          # Mock server implementation
 │   └── generator/     # Payload and test generation (planned)
 ├── examples/          # Sample API schemas for testing
 └── bin/               # Compiled binaries
@@ -83,8 +94,8 @@ mocktail/
 ## Roadmap
 
 - [x] OpenAPI 3.x schema parser
+- [x] HTTP mock server with realistic responses
 - [ ] GraphQL schema parser
-- [ ] Realistic mock server
 - [ ] Payload generator (happy path & edge cases)
 - [ ] Contract test generator
 - [ ] Traffic monitoring & breaking change detection
