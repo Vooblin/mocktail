@@ -2,262 +2,166 @@
 
 ## Project Overview
 
-Mocktail is an API mocking and contract testing tool targeting small teams and indie developers. The core value proposition:
+Mocktail is a Go-based API mocking tool for indie developers and small teams. It parses OpenAPI 3.x schemas and spins up mock HTTP servers with realistic, schema-aware responses.
 
-- **Input**: OpenAPI/GraphQL schemas or staging endpoints
-- **Output**: Realistic mock servers, test payloads, auto-generated contract tests, and traffic-based breaking change detection
+**Status**: Early stage with parser, mock server, and data generator implemented. Focus on simplicity over enterprise patterns.
 
-This is an **early-stage Go project** - prioritize simplicity and indie dev workflows over enterprise patterns.
+## Architecture
 
-## Current Architecture
+### Core Data Flow
 
-### Implemented Components
+```text
+Schema File → Parser → Normalized Schema → Mock Server → Generator → HTTP Responses
+```
 
-**CLI Framework** (`cmd/mocktail/`):
+1. **Parser** (`internal/parser/`): Reads OpenAPI YAML/JSON, validates with `doc.Validate(ctx)`, normalizes to internal `Schema` struct
+2. **Mock Server** (`internal/mock/`): Routes HTTP requests, dispatches to Generator, returns JSON responses with logging middleware
+3. **Generator** (`internal/generator/`): Creates realistic mock data from OpenAPI schemas using seeded randomization
 
-- Uses `cobra` (github.com/spf13/cobra v1.10.1) for command structure
-- `main.go`: Defines `newRootCmd()` that returns configured cobra.Command, version = "0.1.0"
-- **Subcommands** (one file per command):
-  - `parse.go`: Parse and validate schemas with `-o/--output` flag (summary|verbose)
-  - `mock.go`: Start HTTP mock server with `-p/--port` flag (default: 8080)
-- Pattern: Each command has `newXxxCmd()` constructor returning `*cobra.Command` with `RunE` error handler
-- Example: `mocktail parse examples/petstore.yaml -o verbose`
+### Key Architectural Decisions
 
-**OpenAPI Parser** (`internal/parser/`):
+**Interface-Based Extension**: `Parser` interface enables future GraphQL support. See `NewOpenAPIParser()` for implementation pattern.
 
-- `Parser` interface: Defines `Parse(filepath string) (*Schema, error)` contract
-- `OpenAPIParser`: Uses `github.com/getkin/kin-openapi` library for OpenAPI 3.x validation
-- `Schema` model: Normalized representation with Type, Version, Title, Paths, and Raw fields
-- `Endpoint` model: Captures Method, Path, Summary, Description, Parameters per endpoint
-- Validates specs with `doc.Validate(ctx)` before parsing
-- `extractParameters()` helper pulls type info from OpenAPI schema references
+**Schema Normalization**: Raw OpenAPI structures converted to simplified `Schema`/`Endpoint`/`Parameter` models in parser layer. This decouples server logic from OpenAPI-specific types.
 
-**Mock Server** (`internal/mock/`):
+**Stateless Mock Server**: No database or state. Responses generated deterministically from schema + seed. Path patterns (e.g., `{id}` presence) determine response structure:
 
-- `Server` struct: Wraps `*http.Server`, parsed `*parser.Schema`, and port
-- `NewServer(schema, port)`: Constructor pattern
-- **Lifecycle**: `Start()` begins serving, `Stop(ctx)` graceful shutdown with 5s timeout
-- **Routing**: One handler per path in schema, dispatches by HTTP method
-- **Response Generation**: Path-based heuristics (list vs single resource detection via `{id}` in path)
-  - GET list: Returns `{"data": [...], "total": N}` with 2 mock items
-  - GET single: Returns `{"id": "uuid", "name": "...", "createdAt": "..."}`
-  - POST: Returns 201 with resource + `"message": "Resource created successfully"`
-  - PUT/PATCH: Returns resource + `"updatedAt"` timestamp
-  - DELETE: Returns `{"message": "Resource deleted successfully"}`
-- **Middleware**: `loggingMiddleware` logs `METHOD PATH STATUS DURATION` for every request
-- **Health Check**: `/health` endpoint returns `{"status": "ok", "server": "mocktail"}`
-- Signal handling: `os.Interrupt`/`SIGTERM` trigger graceful shutdown via context cancellation
+- `/pets` (list) → `{"data": [...], "total": N}`
+- `/pets/123` (single) → `{"id": "...", "name": "..."}`
 
-**Build System**:
-
-- Makefile with targets: `build`, `test`, `test-coverage`, `test-verbose`, `fmt`, `clean`, `deps`, `install`, `help`
-- Outputs to `bin/mocktail`
-- Go version: 1.25.0
-
-### Components To Be Built
-
-- `internal/generator/` - Payload and test data generation (schema-aware realistic data)
-- `internal/monitor/` - Traffic watching & breaking change detection
+**Generator Seed Pattern**: `NewGenerator(seed)` ensures reproducible mock data across runs. Uses `math/rand` with custom seed, not `crypto/rand`.
 
 ## Development Workflow
 
-### Essential Make Commands
+### Build & Test Essentials
 
 ```bash
-make build           # Builds to bin/mocktail
-make test            # Run all tests
-make test-coverage   # Tests with coverage report
-make test-verbose    # Tests with -v flag
-make fmt             # Format code (go fmt ./...)
-make clean           # Remove bin/ directory
-make deps            # Download and tidy dependencies
-make install         # Install to $GOPATH/bin
-make help            # Show all available targets
+# Critical Makefile targets (see Makefile for all)
+make build           # → bin/mocktail
+make test            # Fast tests (no -v)
+make test-coverage   # Coverage report
+make fmt             # go fmt ./...
+
+# Running mock server
+./bin/mocktail mock examples/petstore.yaml       # Default port 8080
+./bin/mocktail mock examples/petstore.yaml -p 3000
+
+# Testing live server
+curl http://localhost:8080/health  # Health check
+curl http://localhost:8080/pets    # List endpoint
 ```
 
-### Running the Mock Server Locally
+### Testing Strategy (Critical)
 
-```bash
-# Build and start mock server
-make build
-./bin/mocktail mock examples/petstore.yaml
+**No test frameworks** - plain `testing` package only. Patterns:
 
-# Custom port
-./bin/mocktail mock examples/petstore.yaml --port 3000
-
-# Test endpoints while server is running
-curl http://localhost:8080/health
-curl http://localhost:8080/pets        # GET list
-curl http://localhost:8080/pets/123    # GET single resource
-```
-
-### Adding New Cobra Subcommands
-
-Create a new file in `cmd/mocktail/` (e.g., `generate.go`) and register in `main.go`:
+**Server Tests**: Port isolation + goroutines + graceful shutdown
 
 ```go
-// cmd/mocktail/generate.go
+server := NewServer(schema, 8081)  // Unique port per test!
+errChan := make(chan error, 1)
+go func() { errChan <- server.Start() }()
+time.Sleep(100 * time.Millisecond)  // Wait for startup
+
+// Make HTTP requests...
+
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+server.Stop(ctx)  // Always test cleanup
+```
+
+**Parser Tests**: Use `t.TempDir()` for file isolation, inline test schemas as strings.
+
+**Table-Driven**: See `internal/generator/generator_test.go` for callback pattern:
+
+```go
+tests := []struct {
+    name   string
+    schema *openapi3.Schema
+    check  func(t *testing.T, result string)  // Flexible assertion
+}{ /*...*/ }
+```
+
+**Resource Cleanup**: Always `defer resp.Body.Close()`, `defer cancel()`, etc.
+
+### Adding CLI Commands
+
+1. Create `cmd/mocktail/newcmd.go` with `newXxxCmd() *cobra.Command`
+2. Register in `cmd/mocktail/main.go`: `rootCmd.AddCommand(newXxxCmd())`
+3. Pattern: `RunE` returns errors, flags via `StringVarP`/`IntVarP`, exact args with `cobra.ExactArgs(1)`
+
+Example:
+
+```go
 func newGenerateCmd() *cobra.Command {
-    cmd := &cobra.Command{
+    var format string
+    return &cobra.Command{
         Use:   "generate <schema-file>",
         Short: "Generate test payloads",
         Args:  cobra.ExactArgs(1),
         RunE: func(cmd *cobra.Command, args []string) error {
             // Implementation
-            return nil
+            return fmt.Errorf("not implemented: %w", err)
         },
     }
-    cmd.Flags().StringVarP(&format, "format", "f", "json", "Output format")
-    return cmd
 }
-
-// cmd/mocktail/main.go - add to newRootCmd()
-rootCmd.AddCommand(newGenerateCmd())
 ```
 
 ## Code Conventions
 
-### Testing Pattern
-
-All components follow table-driven or scenario-based testing:
-
-**Command Tests** (`cmd/mocktail/*_test.go`):
-
-```go
-func TestParseCommand(t *testing.T) {
-    cmd := newParseCmd()
-    // Test command properties with plain if checks
-    if cmd.Use != "parse <schema-file>" {
-        t.Errorf("Expected Use 'parse <schema-file>', got '%s'", cmd.Use)
-    }
-    // Validate flags exist
-    outputFlag := cmd.Flags().Lookup("output")
-    if outputFlag == nil {
-        t.Error("Expected 'output' flag to exist")
-    }
-}
-```
-
-**Parser Tests** (`internal/parser/parser_test.go`):
-
-- Use `t.TempDir()` for test file isolation
-- Write test OpenAPI specs inline as strings
-- Test happy path validation (titles, paths, parameters)
-- Test error cases (nonexistent files, invalid specs)
-
-**Server Tests** (`internal/mock/server_test.go`):
-
-- Start server on unique port per test (8081, 8082, etc.) to avoid conflicts
-- Use goroutines with error channels: `go func() { errChan <- server.Start() }()`
-- Wait for server startup: `time.Sleep(100 * time.Millisecond)` after launching
-- Always test graceful shutdown with `context.WithTimeout()`
-- Table-driven tests for endpoint methods: validate status codes AND response structure
-- Use `checkResponse func(t *testing.T, body []byte)` callbacks for flexible assertions
-
-**Conventions**:
-
-- Use `strings.Contains()` for substring checks in descriptions
-- Prefer `t.Fatalf()` when test cannot continue, `t.Errorf()` otherwise
-- No test frameworks - plain `testing` package only
-- Always `defer resp.Body.Close()` and `defer cancel()` for resources
-
 ### Error Handling
 
-- Return errors explicitly from functions with context wrapping:
+- Wrap with context: `fmt.Errorf("failed to X: %w", err)`
+- Cobra commands use `RunE`, return errors directly
+- Main checks `Execute()` error, prints to stderr, `os.Exit(1)`
 
-  ```go
-  return fmt.Errorf("failed to parse schema: %w", err)
-  ```
+### Generator Pattern (New Feature Implementation)
 
-- Cobra RunE functions return error: `RunE: func(cmd *cobra.Command, args []string) error`
-- Main entry point checks `Execute()` result, prints to stderr, exits with code 1
-- Parser validates OpenAPI specs with `doc.Validate(ctx)` before processing
+See `internal/generator/generator.go`:
 
-### Project Layout (Standard Go)
+- Constructor with seed: `NewGenerator(seed int64)`
+- Type-switch on OpenAPI schema types (string/integer/number/boolean/array/object)
+- Format-aware generation: `date-time` → RFC3339, `email` → user@example.com, `uuid` → custom format
+- Respect constraints: `Min`/`Max` for numbers, `MinItems`/`MaxItems` for arrays, `Enum` for enums
 
-- `/cmd/mocktail/` - CLI commands (each command in separate file: `parse.go`, `mock.go`, etc.)
-- `/internal/parser/` - Schema parsing (OpenAPI implemented, GraphQL planned)
-- `/internal/mock/` - Mock server (not yet implemented)
-- `/internal/generator/` - Data generation (not yet implemented)
-- `/examples/` - Sample schemas for testing (`petstore.yaml`)
-- `/bin/` - Build output (gitignored)
-- No `/pkg/` - all code is internal to mocktail
+### Mock Server Internals
 
-## Design Principles
+- One `mux.HandleFunc(path, ...)` per schema path in `Start()`
+- `handlePath()` dispatches by HTTP method to matched endpoint
+- `generateMockResponse()` tries schema-based generation first, falls back to basic mocks
+- Custom middleware: `loggingMiddleware` wraps handlers with `loggingResponseWriter`
+- Graceful shutdown: `server.Shutdown(ctx)` with 5s timeout on SIGTERM/SIGINT
 
-### Target Audience Impact
+## Project Structure
 
-**Indie developers & small teams** means:
-
-- Single binary distribution (no complex installation)
-- Minimal external dependencies (currently only cobra)
-- Makefile over complex build tooling
-- Clear, self-documenting CLI help text
-
-### Mock Server Philosophy
-
-- Stateless: responses should be deterministic from schema alone
-- Use seed-based randomization for reproducible test data
-- Prioritize "realistic" over "exhaustive" data generation
-
-### Schema Parsing Strategy
-
-**Current Implementation** (`internal/parser/parser.go`):
-
-- Interface-based design: `Parser` interface with `Parse(filepath string) (*Schema, error)`
-- `OpenAPIParser` uses `github.com/getkin/kin-openapi` library
-- Validation before parsing: `doc.Validate(ctx)` catches spec errors early
-- Normalization: Converts OpenAPI-specific structures to generic `Schema`, `Endpoint`, `Parameter` types
-- Parameter extraction: `extractParameters()` helper pulls type info from OpenAPI schema references
-
-**Data Model**:
-
-```go
-type Schema struct {
-    Type    string                // "openapi" or "graphql"
-    Version string                // e.g., "3.0.0"
-    Title   string
-    Paths   map[string][]Endpoint // Path -> methods
-    Raw     interface{}           // Original parsed object
-}
+```text
+cmd/mocktail/        # One file per command (main.go, parse.go, mock.go)
+internal/parser/     # Parser interface, OpenAPIParser, Schema/Endpoint/Parameter models
+internal/mock/       # Server struct, HTTP handlers, middleware
+internal/generator/  # Generator struct, schema type generators (string/int/array/object)
+examples/            # petstore.yaml for testing
+bin/                 # Build output (gitignored)
 ```
 
-**Extension Strategy**: Add GraphQL by implementing `Parser` interface (see `NewOpenAPIParser()` pattern)
+**No `/pkg/`** - all code is internal to mocktail binary.
 
-### Mock Server Philosophy
+## Dependencies
 
-- Stateless: responses should be deterministic from schema alone
-- Use seed-based randomization for reproducible test data
-- Prioritize "realistic" over "exhaustive" data generation
-- Path-based heuristics: Detect list vs single resource by presence of `{id}` in path
-- Status code mapping: POST→201, DELETE→200, others→200
-- All responses include `X-Mocktail-Server: true` header for identification
-- Logging format: `METHOD PATH STATUS_CODE DURATION` via custom `loggingResponseWriter`
+- `github.com/spf13/cobra` v1.10.1 - CLI framework
+- `github.com/getkin/kin-openapi` v0.133.0 - OpenAPI 3.x parsing/validation
+- Go 1.25.0
 
-## Key Files
+## Next Priorities
 
-- `cmd/mocktail/main.go` - CLI entry point with cobra setup
-- `cmd/mocktail/parse.go` - Parse command implementation (RunE pattern)
-- `cmd/mocktail/mock.go` - Mock server command with signal handling
-- `cmd/mocktail/main_test.go` - Test pattern reference
-- `internal/parser/parser.go` - Parser interface, OpenAPIParser, Schema models
-- `internal/parser/parser_test.go` - Parser testing with t.TempDir() pattern
-- `internal/mock/server.go` - HTTP mock server implementation
-- `internal/mock/server_test.go` - Server testing with goroutines and deferred cleanup
-- `Makefile` - Build automation and available commands
-- `go.mod` - Go 1.25.0, cobra v1.10.1, kin-openapi v0.133.0
-- `examples/petstore.yaml` - Sample OpenAPI spec for testing
-- `README.md` - User-facing documentation and quick start
+1. ~~Payload generator~~ ✅ Implemented
+2. Contract test generator (use Generator to create test fixtures)
+3. GraphQL parser (implement `Parser` interface)
+4. Traffic monitoring (`internal/monitor/`)
 
-## Next Steps for AI Agents
+## Common Pitfalls
 
-When implementing features:
-
-1. Create packages in `internal/` following Standard Go Project Layout
-2. Add corresponding cobra subcommands in `cmd/mocktail/` (separate file per command)
-3. Follow established testing pattern: `t.TempDir()` for files, plain if checks, no frameworks
-4. Implement interfaces where possible (see `Parser` for pattern)
-5. Update Makefile if new build steps are needed
-6. Increment version constant in main.go for releases
-
-**Next Priority**: Payload generator implementation (`internal/generator/`) with schema-aware realistic data
+1. **Port conflicts in tests**: Always use unique ports (8081, 8082, etc.)
+2. **Server startup race**: Add `time.Sleep(100 * time.Millisecond)` after goroutine launch
+3. **Unclosed resources**: Always defer `resp.Body.Close()` in HTTP tests
+4. **Schema type slices**: OpenAPI types are `*openapi3.Types`, access via `.Slice()[0]`
+5. **Version bumps**: Update `version` const in `cmd/mocktail/main.go` for releases

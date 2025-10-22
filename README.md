@@ -1,12 +1,13 @@
 # Mocktail
 
-Upload an OpenAPI/GraphQL schema, or point it at a staging endpoint, and Mocktail spins up a realistic mock server, generates sample and edge-case payloads, and auto-writes contract tests for your CI. It then watches traffic to detect breaking changes before they reach production. Perfect for small teams and indie devs shipping APIs fast.
+🍹 A lightweight API mocking tool for indie developers and small teams. Point Mocktail at an OpenAPI schema and get a realistic mock server with schema-aware responses—no configuration needed.
 
 ## Features
 
-✅ **OpenAPI 3.x Parser** - Parse and validate OpenAPI specifications with detailed endpoint analysis  
-✅ **Mock Server** - HTTP mock server with realistic responses based on schema endpoints  
-🚧 **Test Generator** - Coming soon  
+✅ **OpenAPI 3.x Parser** - Parse and validate OpenAPI specifications  
+✅ **Mock Server** - HTTP mock server with realistic, schema-driven responses  
+✅ **Schema-Aware Generator** - Produces realistic mock data respecting types, formats, and constraints  
+🚧 **Contract Test Generator** - Coming soon  
 🚧 **Traffic Monitor** - Coming soon
 
 ## Quick Start
@@ -84,20 +85,32 @@ mocktail/
 ├── cmd/
 │   └── mocktail/       # CLI entry point and commands
 ├── internal/           # Private application code
-│   ├── parser/        # Schema parsing logic (OpenAPI 3.x implemented)
-│   ├── mock/          # Mock server implementation
-│   └── generator/     # Payload and test generation (planned)
+│   ├── parser/        # OpenAPI 3.x schema parsing and validation
+│   ├── mock/          # HTTP mock server with middleware
+│   └── generator/     # Schema-aware mock data generation
 ├── examples/          # Sample API schemas for testing
-└── bin/               # Compiled binaries
+└── bin/               # Compiled binaries (gitignored)
 ```
+
+## How It Works
+
+1. **Parse**: Validates OpenAPI spec with `doc.Validate(ctx)`, normalizes to internal schema model
+2. **Route**: Creates HTTP handlers for each endpoint in the schema
+3. **Generate**: Produces realistic responses using seeded randomization—respects types, formats, enums, and min/max constraints
+4. **Serve**: Returns JSON with appropriate status codes (POST→201, DELETE→200, etc.)
+
+Responses are deterministic (same seed = same data) and path-aware:
+
+- `/pets` → `{"data": [...], "total": N}` (list)
+- `/pets/123` → `{"id": "...", "name": "..."}` (single resource)
 
 ## Roadmap
 
-- [x] OpenAPI 3.x schema parser
+- [x] OpenAPI 3.x schema parser with validation
 - [x] HTTP mock server with realistic responses
-- [ ] GraphQL schema parser
-- [ ] Payload generator (happy path & edge cases)
+- [x] Schema-aware data generator (types, formats, constraints)
 - [ ] Contract test generator
+- [ ] GraphQL schema parser
 - [ ] Traffic monitoring & breaking change detection
 
 ## License
